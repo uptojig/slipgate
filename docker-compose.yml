@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: slipgate
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/slipgate
+      AUTH_SECRET: ${AUTH_SECRET:-dev-secret-please-change}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      TMN_WEBHOOK_AUTH_KEY: ${TMN_WEBHOOK_AUTH_KEY}
+      TMN_WEBHOOK_JWT_SECRET: ${TMN_WEBHOOK_JWT_SECRET}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      SLIP_OCR_MODEL: ${SLIP_OCR_MODEL:-anthropic/claude-haiku-4-5}
+      EASYSLIP_API_KEY: ${EASYSLIP_API_KEY:-}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
