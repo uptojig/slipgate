@@ -24,6 +24,18 @@ export const dynamic = "force-dynamic";
  *   ทรูมันนี่ → แจ้งรับเงิน/เติมเงิน OR แจ้งหักค่าธรรมเนียมและถอนเงิน
  *   → Endpoint URL = https://<your-domain>/api/webhook/truemoney?u=usr_XXXX
  */
+
+// TMN's "ตั้งค่า API" validator pings the endpoint with GET/HEAD before
+// accepting the URL. Return 200 so the URL passes validation; real events
+// arrive via POST.
+export async function GET() {
+  return NextResponse.json({ ok: true, hint: "POST with TMN JWT payload" });
+}
+
+export async function HEAD() {
+  return new NextResponse(null, { status: 200 });
+}
+
 export async function POST(req: NextRequest) {
   const userIdToken = req.nextUrl.searchParams.get("u");
   if (!userIdToken) {
