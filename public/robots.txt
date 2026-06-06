@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /dashboard/
+Disallow: /api/
+Allow: /docs
+Allow: /
