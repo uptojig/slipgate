@@ -37,107 +37,118 @@ export async function HEAD() {
 }
 
 export async function POST(req: NextRequest) {
-  const userIdToken = req.nextUrl.searchParams.get("u");
-  if (!userIdToken) {
-    return NextResponse.json({ ok: false, error: "missing u" }, { status: 400 });
-  }
-
-  const user = await db.query.users.findFirst({
-    where: (u, { eq }) => eq(u.id, userIdToken),
-    columns: { id: true },
-  });
-  if (!user) {
-    return NextResponse.json({ ok: false, error: "user not found" }, { status: 404 });
-  }
-
-  const authKey = process.env.TMN_WEBHOOK_AUTH_KEY;
-  const jwtSecret = process.env.TMN_WEBHOOK_JWT_SECRET;
-  if (!authKey || !jwtSecret) {
-    return NextResponse.json({ ok: false, error: "server not configured" }, { status: 500 });
-  }
-
-  const rawBody = await req.text();
-  const result = verifyTmnRequest({
-    authorizationHeader: req.headers.get("authorization"),
-    rawBody,
-    expectedAuthKey: authKey,
-    jwtSecret,
-  });
-  if (!result.ok) {
-    return NextResponse.json(
-      { ok: false, error: result.reason, detail: result.detail },
-      { status: 401 },
-    );
-  }
-
-  const payload = result.payload;
-  const ev = normaliseTmnPayload(payload);
-
-  // Idempotency check.
-  const existingEvent = await db.query.tmnEvents.findFirst({
-    where: (e, { eq }) => eq(e.transactionId, ev.externalRef),
-  });
-  if (existingEvent) {
-    return NextResponse.json({ ok: true, duplicated: true });
-  }
-
-  const eventId = newId("tmev");
-  await db.insert(schema.tmnEvents).values({
-    id: eventId,
-    transactionId: ev.externalRef,
-    eventType: ev.eventType,
-    rawPayload: payload as unknown as object,
-    matchedUserId: user.id,
-  });
-
-  // ── INBOUND: credit the user wallet ──────────────────────────────
-  if (ev.direction === "in") {
-    const { kind } = tmnEventToLedgerKind(ev.eventType);
-    if (!kind || kind === "withdraw" || kind === "adjust") {
-      return NextResponse.json({ ok: true, logged: true, event_type: ev.eventType });
+  // TrueMoney's "ตั้งค่า API → ส่งข้อมูล" validator sends a test POST and
+  // treats ANY non-2xx as "ติดต่อ server ปลายทางไม่ได้". So this handler
+  // returns 200 for every well-formed request — including ones we choose to
+  // ignore (bad signature, missing user, missing secret). Real DB/code
+  // failures still throw → 500 (which TMN retries).
+  try {
+    const userIdToken = req.nextUrl.searchParams.get("u");
+    if (!userIdToken) {
+      return NextResponse.json({ ok: false, ignored: "missing_u" });
     }
 
-    const credit = await postLedger({
-      userId: user.id,
-      kind,
-      amountSatang: ev.amountSatang, // already positive
-      externalRef: ev.externalRef,
-      source: ev.counterpartyName ?? ev.counterpartyMobile ?? ev.channel,
-      note: ev.note,
-      metadata: payload as unknown as Record<string, unknown>,
+    const user = await db.query.users.findFirst({
+      where: (u, { eq }) => eq(u.id, userIdToken),
+      columns: { id: true },
+    });
+    if (!user) {
+      return NextResponse.json({ ok: false, ignored: "user_not_found" });
+    }
+
+    const authKey = process.env.TMN_WEBHOOK_AUTH_KEY;
+    const jwtSecret = process.env.TMN_WEBHOOK_JWT_SECRET;
+    if (!authKey || !jwtSecret) {
+      return NextResponse.json({ ok: false, ignored: "not_configured" });
+    }
+
+    const rawBody = await req.text();
+    const result = verifyTmnRequest({
+      authorizationHeader: req.headers.get("authorization"),
+      rawBody,
+      expectedAuthKey: authKey,
+      jwtSecret,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, ignored: result.reason, detail: result.detail });
+    }
+
+    const payload = result.payload;
+    const ev = normaliseTmnPayload(payload);
+
+    // Idempotency check.
+    const existingEvent = await db.query.tmnEvents.findFirst({
+      where: (e, { eq }) => eq(e.transactionId, ev.externalRef),
+    });
+    if (existingEvent) {
+      return NextResponse.json({ ok: true, duplicated: true });
+    }
+
+    const eventId = newId("tmev");
+    await db.insert(schema.tmnEvents).values({
+      id: eventId,
+      transactionId: ev.externalRef,
+      eventType: ev.eventType,
+      rawPayload: payload as unknown as object,
+      matchedUserId: user.id,
     });
 
-    if (credit.txId) {
-      await db
-        .update(schema.tmnEvents)
-        .set({ matchedTransactionId: credit.txId })
-        .where(eq(schema.tmnEvents.id, eventId));
+    // ── INBOUND: credit the user wallet ──────────────────────────────
+    if (ev.direction === "in") {
+      const { kind } = tmnEventToLedgerKind(ev.eventType);
+      if (!kind || kind === "withdraw" || kind === "adjust") {
+        return NextResponse.json({ ok: true, logged: true, event_type: ev.eventType });
+      }
+
+      const credit = await postLedger({
+        userId: user.id,
+        kind,
+        amountSatang: ev.amountSatang,
+        externalRef: ev.externalRef,
+        source: ev.counterpartyName ?? ev.counterpartyMobile ?? ev.channel,
+        note: ev.note,
+        metadata: payload as unknown as Record<string, unknown>,
+      });
+
+      if (credit.txId) {
+        await db
+          .update(schema.tmnEvents)
+          .set({ matchedTransactionId: credit.txId })
+          .where(eq(schema.tmnEvents.id, eventId));
+      }
+
+      return NextResponse.json({
+        ok: true,
+        direction: "in",
+        credited: !credit.duplicated,
+        event_type: ev.eventType,
+        amount_satang: ev.amountSatang,
+        balance_satang: credit.balance,
+        transaction_id: ev.externalRef,
+      });
     }
+
+    // ── OUTBOUND: try to auto-match against pending withdrawal ───────
+    // BANK_WITHDRAW carries destination account in `description`.
+    // SEND_P2P carries destination phone in `merchant_name`.
+    const matched = await tryMatchWithdrawal(user.id, ev, eventId);
 
     return NextResponse.json({
       ok: true,
-      direction: "in",
-      credited: !credit.duplicated,
+      direction: "out",
       event_type: ev.eventType,
-      amount_satang: ev.amountSatang,
-      balance_satang: credit.balance,
+      amount_satang: Math.abs(ev.amountSatang),
+      matched_withdrawal_id: matched?.id ?? null,
       transaction_id: ev.externalRef,
     });
+  } catch (e) {
+    // Real server faults bubble up as 500 (TMN will retry).
+    console.error("[truemoney webhook] fatal:", e);
+    return NextResponse.json(
+      { ok: false, error: (e as Error).message },
+      { status: 500 },
+    );
   }
-
-  // ── OUTBOUND: try to auto-match against pending withdrawal ───────
-  // BANK_WITHDRAW carries destination account in `description`.
-  // SEND_P2P carries destination phone in `merchant_name`.
-  const matched = await tryMatchWithdrawal(user.id, ev, eventId);
-
-  return NextResponse.json({
-    ok: true,
-    direction: "out",
-    event_type: ev.eventType,
-    amount_satang: Math.abs(ev.amountSatang),
-    matched_withdrawal_id: matched?.id ?? null,
-    transaction_id: ev.externalRef,
-  });
 }
 
 /**
