@@ -43,9 +43,10 @@ export async function POST(req: NextRequest) {
   // ignore (bad signature, missing user, missing secret). Real DB/code
   // failures still throw → 500 (which TMN retries).
   try {
-    const userIdToken = req.nextUrl.searchParams.get("u");
+    // Trim whitespace — TMN sometimes URL-encodes accidental spaces from copy/paste.
+    const userIdToken = req.nextUrl.searchParams.get("u")?.replace(/\s+/g, "") || "";
     if (!userIdToken) {
-      return NextResponse.json({ ok: false, ignored: "missing_u" });
+      return NextResponse.json({ ok: true, ignored: "missing_u" });
     }
 
     const user = await db.query.users.findFirst({
@@ -53,13 +54,13 @@ export async function POST(req: NextRequest) {
       columns: { id: true },
     });
     if (!user) {
-      return NextResponse.json({ ok: false, ignored: "user_not_found" });
+      return NextResponse.json({ ok: true, ignored: "user_not_found" });
     }
 
     const authKey = process.env.TMN_WEBHOOK_AUTH_KEY;
     const jwtSecret = process.env.TMN_WEBHOOK_JWT_SECRET;
     if (!authKey || !jwtSecret) {
-      return NextResponse.json({ ok: false, ignored: "not_configured" });
+      return NextResponse.json({ ok: true, ignored: "not_configured" });
     }
 
     const rawBody = await req.text();
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
       jwtSecret,
     });
     if (!result.ok) {
-      return NextResponse.json({ ok: false, ignored: result.reason, detail: result.detail });
+      return NextResponse.json({ ok: true, ignored: result.reason, detail: result.detail });
     }
 
     const payload = result.payload;
