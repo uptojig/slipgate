@@ -10,22 +10,26 @@ export const dynamic = "force-dynamic";
  * Some webhook providers reject long URLs or URLs with query strings.
  * This alias forwards to /api/webhook/truemoney with ?u=<userId> injected.
  */
-function rewriteWithU(req: NextRequest, uid: string): NextRequest {
-  const url = new URL(req.url);
-  url.pathname = "/api/webhook/truemoney";
-  url.searchParams.set("u", uid);
-  return new NextRequest(url, req as unknown as RequestInit);
-}
-
-export async function GET(req: NextRequest, ctx: { params: Promise<{ uid: string }> }) {
+export async function GET() {
   return truemoneyGET();
 }
 
-export async function HEAD(req: NextRequest, ctx: { params: Promise<{ uid: string }> }) {
+export async function HEAD() {
   return truemoneyHEAD();
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ uid: string }> }) {
   const { uid } = await ctx.params;
-  return truemoneyPOST(rewriteWithU(req, uid));
+  const url = new URL(req.url);
+  url.pathname = "/api/webhook/truemoney";
+  url.searchParams.set("u", uid);
+  // Re-construct as NextRequest by copying body/headers/method to the rewritten URL.
+  const headers = new Headers(req.headers);
+  const body = await req.text();
+  const rewritten = new NextRequest(url.toString(), {
+    method: "POST",
+    headers,
+    body,
+  });
+  return truemoneyPOST(rewritten);
 }
