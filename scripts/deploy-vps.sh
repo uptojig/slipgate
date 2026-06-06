@@ -91,11 +91,11 @@ cat > docker-compose.override.yml <<COMPOSE
 services:
   postgres:
     environment:
-      POSTGRES_PASSWORD: \\\${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${PG_PASS}
     ports: []
   app:
     environment:
-      DATABASE_URL: postgres://postgres:\\\${POSTGRES_PASSWORD}@postgres:5432/slipgate
+      DATABASE_URL: postgres://postgres:${PG_PASS}@postgres:5432/slipgate
     ports: []
     expose: ["3000"]
   caddy:
