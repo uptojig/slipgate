@@ -182,11 +182,22 @@ function ValidateTool({ ready }: { ready: boolean }) {
     return `${x.getUTCFullYear()}-${pad(x.getUTCMonth() + 1)}-${pad(x.getUTCDate())} ${pad(x.getUTCHours())}:${pad(x.getUTCMinutes())}`;
   }
 
-  /** Pull last 10 digits from any masked account string. */
-  function lastDigits(s: string | null | undefined): string {
-    if (!s) return "";
-    const d = s.replace(/\D+/g, "");
-    return d.slice(-10);
+  /** All digits from a masked string. */
+  function allDigits(s: string | null | undefined): string {
+    return s ? s.replace(/\D+/g, "") : "";
+  }
+
+  /**
+   * TMN P2P validate matches on last-4 digits of the phone, and accepts the
+   * "0000xxxx" placeholder pattern. Slips usually mask the middle of the
+   * phone (e.g. "08x-xxx-1234"), so we extract last-4 and left-pad with
+   * zeros to satisfy the endpoint's regex /^\d{10}$/.
+   */
+  function maskedPhoneToTmnInput(s: string | null | undefined): string {
+    const d = allDigits(s);
+    if (d.length < 4) return "";
+    const last4 = d.slice(-4);
+    return "000000" + last4;
   }
 
   async function handleFile(file: File) {
@@ -204,10 +215,18 @@ function ValidateTool({ ready }: { ready: boolean }) {
         return;
       }
       const d = j.data ?? {};
+      // sender_mobile is OPTIONAL on the form. Only auto-fill when the
+      // extracted string looks like a phone (≥ 9 digits visible after mask
+      // — e.g. "08x-xxx-xxxx"). Bank account numbers (often 4 visible
+      // digits like "x-x4442-x") are not phone numbers and shouldn't be
+      // copied into this field.
+      const sourceDigits = allDigits(d.sourceAccount);
+      const senderMobile =
+        sourceDigits.length >= 9 ? maskedPhoneToTmnInput(d.sourceAccount) : form.sender_mobile;
       const next = {
-        sender_mobile: lastDigits(d.sourceAccount) || form.sender_mobile,
-        receiver_mobile: lastDigits(d.targetAccount) || form.receiver_mobile,
-        transaction_id: d.transRef ?? form.transaction_id,
+        sender_mobile: senderMobile,
+        receiver_mobile: maskedPhoneToTmnInput(d.targetAccount) || form.receiver_mobile,
+        transaction_id: (d.transRef ?? form.transaction_id).replace(/\s+/g, ""),
         amount_baht:
           typeof d.amountSatang === "number"
             ? (d.amountSatang / 100).toFixed(2)
@@ -216,7 +235,8 @@ function ValidateTool({ ready }: { ready: boolean }) {
       };
       setForm(next);
       const filled = Object.entries(next).filter(([k, v]) => v && v !== (form as any)[k]).length;
-      setOcrSummary(`ดึงข้อมูลจากสลิปแล้ว — เติม ${filled} ฟิลด์ (วิธี: ${j.method})`);
+      const method = j.method ?? (j.duplicated ? "qr (เคยตรวจแล้ว)" : "unknown");
+      setOcrSummary(`ดึงข้อมูลจากสลิปแล้ว — เติม ${filled} ฟิลด์ (วิธี: ${method})`);
     } catch (e) {
       setOcrError((e as Error).message);
     } finally {

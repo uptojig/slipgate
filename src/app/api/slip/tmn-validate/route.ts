@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { getCurrentUser } from "@/lib/auth";
 import { validateTmnP2P } from "@/lib/truemoney/p2p-validate";
 import { postLedger } from "@/lib/credit/ledger";
 import { newId } from "@/lib/utils";
@@ -37,10 +38,26 @@ const Body = z.object({
  * caller's wallet (idempotent on transaction_id).
  */
 export async function POST(req: NextRequest) {
-  const auth = await authenticateApiRequest(req.headers.get("authorization"));
-  if (!auth) {
+  // Accept either a dashboard session cookie or a Bearer API key. The
+  // dashboard tool at /dashboard/tmn-tools calls this endpoint directly
+  // from the browser without an API key — falling back to the session
+  // keeps that flow working while still allowing programmatic access.
+  let userId: string | null = null;
+  let apiKeyId: string | null = null;
+  const sessionUser = await getCurrentUser();
+  if (sessionUser) {
+    userId = sessionUser.id;
+  } else {
+    const auth = await authenticateApiRequest(req.headers.get("authorization"));
+    if (auth) {
+      userId = auth.userId;
+      apiKeyId = auth.apiKeyId;
+    }
+  }
+  if (!userId) {
     return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
   }
+  void apiKeyId; // reserved for future per-key usage logging
 
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -77,7 +94,7 @@ export async function POST(req: NextRequest) {
     });
     if (!dup) {
       const credit = await postLedger({
-        userId: auth.userId,
+        userId,
         kind: "tmn_incoming",
         amountSatang: parsed.data.amount_satang,
         externalRef: parsed.data.transaction_id,
@@ -90,7 +107,7 @@ export async function POST(req: NextRequest) {
 
       await db.insert(schema.slips).values({
         id: newId("slp"),
-        userId: auth.userId,
+        userId,
         method: "easyslip",
         sourceName: parsed.data.sender_mobile || null,
         targetName: parsed.data.receiver_mobile,

@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
       const validation = await evaluateConditions(parsed, conditions, { userId: user?.id ?? null });
       return NextResponse.json({
         ok: true,
+        method: parsed.method,
         duplicated: true,
         validation,
         data: shapeData(parsed),
