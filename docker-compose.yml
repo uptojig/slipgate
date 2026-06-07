@@ -24,15 +24,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # env_file loads ALL vars from .env so new TMN_WEBHOOK_*_INBOUND /
+    # _OUTBOUND keys (and any future ones) flow through without needing to
+    # enumerate them below. environment: still wins for explicit overrides.
+    env_file:
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/slipgate
+      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/slipgate}
       AUTH_SECRET: ${AUTH_SECRET:-dev-secret-please-change}
       AUTH_URL: ${AUTH_URL:-http://localhost:3000}
-      TMN_WEBHOOK_AUTH_KEY: ${TMN_WEBHOOK_AUTH_KEY}
-      TMN_WEBHOOK_JWT_SECRET: ${TMN_WEBHOOK_JWT_SECRET}
-      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       SLIP_OCR_MODEL: ${SLIP_OCR_MODEL:-anthropic/claude-haiku-4-5}
-      EASYSLIP_API_KEY: ${EASYSLIP_API_KEY:-}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
     ports:
       - "3000:3000"
