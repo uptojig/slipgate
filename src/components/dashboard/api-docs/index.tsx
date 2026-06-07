@@ -285,8 +285,16 @@ function TryItTab({ doc, keyHints }: { doc: EndpointDoc; keyHints: KeyHint[] }) 
     return JSON.stringify(ex.body, null, 2);
   }, [doc.id]);
 
+  const hasPathParam = doc.path.includes("{");
+  const initialPathParam = useMemo(() => {
+    const m = doc.path.match(/\{(\w+)\}/);
+    return m ? "" : "";
+    void m;
+  }, [doc.id]);
+
   const [apiKey, setApiKey] = useState("");
   const [body, setBody] = useState(initialBody);
+  const [pathParam, setPathParam] = useState(initialPathParam);
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<{ status: number; body: unknown } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -300,27 +308,36 @@ function TryItTab({ doc, keyHints }: { doc: EndpointDoc; keyHints: KeyHint[] }) 
   }
 
   const sandboxKeys = keyHints.filter((k) => k.isSandbox);
+  const isGet = doc.method === "GET";
 
   async function run() {
     setLoading(true);
     setError(null);
     setResponse(null);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(body);
-    } catch (e) {
-      setError(`Body ไม่ใช่ JSON ที่ valid: ${(e as Error).message}`);
+    let parsed: unknown = null;
+    if (!isGet) {
+      try {
+        parsed = JSON.parse(body);
+      } catch (e) {
+        setError(`Body ไม่ใช่ JSON ที่ valid: ${(e as Error).message}`);
+        setLoading(false);
+        return;
+      }
+    }
+    if (hasPathParam && !pathParam.trim()) {
+      setError("กรอก path parameter ก่อน");
       setLoading(false);
       return;
     }
+    const url = doc.path.replace(/\{(\w+)\}/, encodeURIComponent(pathParam.trim()));
     try {
-      const res = await fetch(doc.path, {
+      const res = await fetch(url, {
         method: doc.method,
         headers: {
-          "Content-Type": "application/json",
+          ...(isGet ? {} : { "Content-Type": "application/json" }),
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify(parsed),
+        ...(isGet ? {} : { body: JSON.stringify(parsed) }),
       });
       let payload: unknown;
       try {
@@ -367,16 +384,34 @@ function TryItTab({ doc, keyHints }: { doc: EndpointDoc; keyHints: KeyHint[] }) 
         </p>
       </div>
 
-      <div>
-        <label className="text-sm font-semibold">Request Body (JSON)</label>
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={12}
-          className="input font-mono text-xs w-full mt-1.5"
-          spellCheck={false}
-        />
-      </div>
+      {hasPathParam && (
+        <div>
+          <label className="text-sm font-semibold">Path parameter</label>
+          <input
+            value={pathParam}
+            onChange={(e) => setPathParam(e.target.value)}
+            placeholder={doc.path.match(/\{(\w+)\}/)?.[1] ?? "value"}
+            className="input font-mono text-sm w-full mt-1.5"
+            spellCheck={false}
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            จะถูกเสียบเข้า <code>{doc.path}</code>
+          </p>
+        </div>
+      )}
+
+      {!isGet && (
+        <div>
+          <label className="text-sm font-semibold">Request Body (JSON)</label>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={12}
+            className="input font-mono text-xs w-full mt-1.5"
+            spellCheck={false}
+          />
+        </div>
+      )}
 
       <button onClick={run} disabled={loading} className="btn-primary">
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}

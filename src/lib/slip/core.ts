@@ -32,6 +32,33 @@ export type ParsedSlip = {
   ocrError: string | null;
 };
 
+/**
+ * QR-text path — caller already has the raw EMVCo TLV string (read from a
+ * physical scanner / external image). No OCR, no QR decode; just parse the
+ * payload and fill what we can.
+ */
+export function parseSlipFromQrText(qrText: string): ParsedSlip {
+  const parsedQr = parseSlipQr(qrText);
+  const amountSatang =
+    typeof parsedQr.amount === "number" ? Math.round(parsedQr.amount * 100) : null;
+  return {
+    method: "qr",
+    amountSatang,
+    transRef: parsedQr.transRef ?? null,
+    sourceBank: bankNameFromCode(parsedQr.bankCode) ?? null,
+    targetBank: null,
+    sourceName: null,
+    targetName: null,
+    sourceAccount: null,
+    targetAccount: null,
+    datetime: null,
+    qrPayload: qrText,
+    parsedQr,
+    ocr: null,
+    ocrError: null,
+  };
+}
+
 export async function parseSlipBuffer(
   buffer: Buffer,
   mimeType: string,

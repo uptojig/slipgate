@@ -11,7 +11,7 @@
 import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { db, schema } from "@/db";
-import { parseSlipBuffer } from "@/lib/slip/core";
+import { parseSlipBuffer, type ParsedSlip } from "@/lib/slip/core";
 import { evaluateConditions, type CheckCondition } from "@/lib/slip/conditions";
 import { chargeForUsage } from "@/lib/saas/charges";
 import { recordUsage } from "@/lib/saas/usage";
@@ -33,6 +33,15 @@ export type ServePublicOpts = {
   fireWebhook?: boolean;
   endpoint: string; // e.g. "slip.verify", "slip.base64", "slip.url"
   start: number;    // Date.now() at the moment the request was received
+};
+
+export type ServePublicParsedOpts = {
+  auth: PublicSlipAuth;
+  parsed: ParsedSlip;
+  conditions?: CheckCondition;
+  fireWebhook?: boolean;
+  endpoint: string;
+  start: number;
 };
 
 export async function servePublicSlipVerify(opts: ServePublicOpts): Promise<NextResponse> {
@@ -88,6 +97,62 @@ export async function servePublicSlipVerify(opts: ServePublicOpts): Promise<Next
 
   // 3. Parse + evaluate conditions.
   const parsed = await parseSlipBuffer(buffer, mimeType);
+  return servePublicSlipParsed({
+    auth,
+    parsed,
+    conditions,
+    fireWebhook,
+    endpoint,
+    start,
+    chargeInfo: { charged: charge.charged, usedFree: charge.usedFree, balance: charge.balance },
+  });
+}
+
+/**
+ * Same pipeline as servePublicSlipVerify but starting from an already-parsed
+ * ParsedSlip (e.g. QR-text endpoint where there's no image to OCR). Skips
+ * the charge step IF chargeInfo is supplied; otherwise runs charge itself.
+ */
+export async function servePublicSlipParsed(
+  opts: ServePublicParsedOpts & {
+    chargeInfo?: { charged: number; usedFree: number; balance: number };
+  },
+): Promise<NextResponse> {
+  const { auth, parsed, conditions, fireWebhook, endpoint, start } = opts;
+
+  // Charge only if the caller hasn't already done it.
+  let charged = opts.chargeInfo?.charged ?? 0;
+  let usedFree = opts.chargeInfo?.usedFree ?? 0;
+  let balance = opts.chargeInfo?.balance ?? 0;
+  if (!opts.chargeInfo) {
+    const charge = await chargeForUsage(auth.userId, 1, false);
+    if (!charge.ok) {
+      await recordUsage({
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+        endpoint,
+        units: 1,
+        chargedSatang: 0,
+        sandbox: false,
+        success: false,
+        errorCode: "NO_CREDIT",
+        durationMs: Date.now() - start,
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "NO_CREDIT",
+          message: "Insufficient credit. Top up at /dashboard/topup",
+          balance_satang: charge.balance,
+        },
+        { status: 402 },
+      );
+    }
+    charged = charge.charged;
+    usedFree = charge.usedFree;
+    balance = charge.balance;
+  }
+
   const validation = await evaluateConditions(parsed, conditions, { userId: auth.userId });
   const verified = Boolean(parsed.transRef && parsed.amountSatang) && validation.passed;
 
@@ -133,7 +198,7 @@ export async function servePublicSlipVerify(opts: ServePublicOpts): Promise<Next
     apiKeyId: auth.apiKeyId,
     endpoint,
     units: 1,
-    chargedSatang: charge.charged,
+    chargedSatang: charged,
     sandbox: false,
     success: verified,
     errorCode: verified ? null : "UNVERIFIED",
@@ -152,9 +217,9 @@ export async function servePublicSlipVerify(opts: ServePublicOpts): Promise<Next
     validation,
     data,
     billing: {
-      charged_satang: charge.charged,
-      used_free: charge.usedFree,
-      balance_satang: charge.balance,
+      charged_satang: charged,
+      used_free: usedFree,
+      balance_satang: balance,
     },
   });
 }

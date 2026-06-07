@@ -394,7 +394,6 @@ export const ENDPOINTS: EndpointDoc[] = [
       },
     ],
   },
-  // Coming soon — placeholders so the UI can preview the roadmap.
   {
     id: "slip-qr-text",
     group: "Slip Verify",
@@ -404,11 +403,62 @@ export const ENDPOINTS: EndpointDoc[] = [
     path: "/api/v1/slip/qr",
     authRequired: true,
     contentType: "application/json",
-    available: false,
-    howTo: [],
-    request: [],
-    requestExamples: [],
-    responseExamples: [],
+    available: true,
+    howTo: [
+      "ระบุ API Secret มาใน Header Authorization ทุกครั้ง",
+      "ส่ง QR text ของสลิป (EMVCo TLV string ที่ขึ้นต้นด้วย 00020101…) ผ่านฟิลด์ payload.qrText",
+      "endpoint นี้ไม่ใช้ OCR — เร็วกว่า base64/url แต่จะไม่มีข้อมูล amount/ชื่อจาก visual",
+    ],
+    request: [
+      {
+        key: "payload",
+        type: "Object",
+        description: "Object ข้อมูลทั้งหมด",
+        example: "{ payload: { ... } }",
+        required: true,
+      },
+      {
+        key: "payload.qrText",
+        type: "String",
+        description: "ข้อความ EMVCo TLV ที่ decode ออกมาจาก QR",
+        example: '"00020101021229...5303764540420.005802TH62...6304XXXX"',
+        required: true,
+      },
+      ...CHECK_CONDITION_ROWS,
+    ],
+    requestExamples: [
+      {
+        label: "Minimal",
+        body: {
+          payload: { qrText: "00020101021229370016A0000006770101110113006601234567890123456789530376463047A92" },
+        },
+      },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        label: "Success",
+        body: {
+          ok: true,
+          method: "qr",
+          verified: false,
+          validation: { passed: true, checks: [] },
+          data: {
+            trans_ref: "16158084453BPP09618",
+            amount_satang: null,
+            source_bank: "KBANK",
+            method: "qr",
+            verified: false,
+          },
+          billing: { charged_satang: 20, used_free: 0, balance_satang: 9980 },
+        },
+      },
+      {
+        status: 422,
+        label: "Bad QR text",
+        body: { ok: false, error: "BAD_QR", message: "QR text could not be parsed as a slip-verify payload" },
+      },
+    ],
   },
   {
     id: "slip-retrieve",
@@ -419,26 +469,101 @@ export const ENDPOINTS: EndpointDoc[] = [
     path: "/api/v1/slip/{transRef}",
     authRequired: true,
     contentType: "application/json",
-    available: false,
-    howTo: [],
-    request: [],
-    requestExamples: [],
-    responseExamples: [],
+    available: true,
+    howTo: [
+      "ระบุ API Secret มาใน Header Authorization ทุกครั้ง",
+      "ใส่ transRef ของสลิปที่เคยตรวจไว้แล้วใน URL path",
+      "ผลลัพธ์จะ scope ตาม userId ของ key — เห็นเฉพาะสลิปของตัวเอง",
+      "endpoint นี้ไม่คิดเครดิต — เป็น read-only",
+    ],
+    request: [
+      {
+        key: "transRef",
+        type: "String",
+        description: "Path parameter — เลข trans reference (URL-encoded ถ้ามีอักขระพิเศษ)",
+        example: '"016158084453BPP09618"',
+        required: true,
+      },
+    ],
+    requestExamples: [
+      {
+        label: "cURL",
+        body: {
+          __curl:
+            "curl https://remoobbg.com/api/v1/slip/016158084453BPP09618 \\\n" +
+            '  -H "Authorization: Bearer sk_..."',
+        },
+      },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        label: "Success",
+        body: {
+          ok: true,
+          data: {
+            id: "slp_xxx",
+            trans_ref: "016158084453BPP09618",
+            method: "qr",
+            verified: true,
+            amount_satang: 5500,
+            source_bank: "KBANK",
+            target_bank: "PromptPay",
+            source_name: "น.ส. ธันว์ภัสสร ส",
+            target_name: "ธันว์ภัสสร สิรทรัพย์ภาคิน",
+            datetime: "2026-06-07T01:44:00.000Z",
+            created_at: "2026-06-07T01:45:23.000Z",
+          },
+        },
+      },
+      {
+        status: 404,
+        label: "Not found",
+        body: { ok: false, error: "NOT_FOUND", message: "No slip found for transRef …" },
+      },
+    ],
   },
   {
     id: "account-info",
     group: "Account",
     title: "ดึงข้อมูลบัญชี",
-    shortDescription: "ขอข้อมูลบัญชี เช่น เครดิตคงเหลือ",
+    shortDescription: "ขอข้อมูลบัญชี เช่น เครดิตคงเหลือ + quota เดือนนี้",
     method: "GET",
     path: "/api/v1/account",
     authRequired: true,
     contentType: "application/json",
-    available: false,
-    howTo: [],
+    available: true,
+    howTo: [
+      "ระบุ API Secret มาใน Header Authorization",
+      "ใช้สำหรับเช็คว่า key ใช้ได้หรือยัง + ดูยอดเครดิตคงเหลือ + จำนวนสลิปฟรีที่เหลือเดือนนี้",
+      "endpoint นี้ไม่คิดเครดิต",
+    ],
     request: [],
-    requestExamples: [],
-    responseExamples: [],
+    requestExamples: [
+      {
+        label: "cURL",
+        body: {
+          __curl:
+            "curl https://remoobbg.com/api/v1/account \\\n" +
+            '  -H "Authorization: Bearer sk_..."',
+        },
+      },
+    ],
+    responseExamples: [
+      {
+        status: 200,
+        label: "Success",
+        body: {
+          ok: true,
+          free_remaining: 87,
+          free_resets_at: "2026-07-01T00:00:00.000Z",
+          balance_satang: 9980,
+          balance_baht: 99.8,
+          price_per_slip_satang: 20,
+          sandbox: false,
+        },
+      },
+    ],
   },
 ];
 
