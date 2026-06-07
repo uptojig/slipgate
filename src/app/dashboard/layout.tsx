@@ -14,6 +14,7 @@ import {
   CreditCard,
   BarChart3,
   Send,
+  Code2,
   LogOut,
 } from "lucide-react";
 
@@ -34,6 +35,7 @@ const NAV = [
   { href: "/dashboard/transactions", label: "รายการเงิน", icon: ArrowLeftRight },
   { href: "/dashboard/withdraw", label: "ถอนเงิน", icon: ArrowDownToLine },
   { href: "/dashboard/api-keys", label: "API Keys", icon: KeyRound },
+  { href: "/dashboard/api-docs", label: "API Endpoint", icon: Code2 },
 ];
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
