@@ -11,7 +11,11 @@ export default async function TmnToolsPage() {
     balance: Boolean(process.env.TMN_BALANCE_TOKEN),
     transferLink: Boolean(process.env.TMN_TRANSFER_LINK_TOKEN),
     qrInfo: Boolean(process.env.TMN_QR_INFO_TOKEN),
-    webhook: Boolean(process.env.TMN_WEBHOOK_JWT_SECRET),
+    webhook: Boolean(
+      process.env.TMN_WEBHOOK_AUTH_KEY_INBOUND ||
+        process.env.TMN_WEBHOOK_AUTH_KEY_OUTBOUND ||
+        process.env.TMN_WEBHOOK_JWT_SECRET,
+    ),
   };
 
   return (

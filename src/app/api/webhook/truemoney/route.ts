@@ -3,6 +3,7 @@ import { and, eq, gte, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import {
   verifyTmnRequest,
+  collectTmnKeysFromEnv,
   tmnEventToLedgerKind,
   normaliseTmnPayload,
   type NormalisedTmnEvent,
@@ -57,9 +58,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ignored: "user_not_found" });
     }
 
-    const authKey = process.env.TMN_WEBHOOK_AUTH_KEY;
-    const jwtSecret = process.env.TMN_WEBHOOK_JWT_SECRET;
-    if (!authKey || !jwtSecret) {
+    const keys = collectTmnKeysFromEnv();
+    if (keys.length === 0) {
       return NextResponse.json({ ok: true, ignored: "not_configured" });
     }
 
@@ -67,8 +67,7 @@ export async function POST(req: NextRequest) {
     const result = verifyTmnRequest({
       authorizationHeader: req.headers.get("authorization"),
       rawBody,
-      expectedAuthKey: authKey,
-      jwtSecret,
+      keys,
     });
     if (!result.ok) {
       return NextResponse.json({ ok: true, ignored: result.reason, detail: result.detail });

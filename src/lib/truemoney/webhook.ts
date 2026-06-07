@@ -85,24 +85,39 @@ export type OutboundPayload = {
 
 export type TmnPayload = (InboundPayload | OutboundPayload) & { [k: string]: unknown };
 
+export type TmnKeyPair = {
+  authKey: string;
+  jwtSecret: string;
+  label?: string; // e.g. "inbound" / "outbound" — surfaces in VerifyResult
+};
+
 export type VerifyResult =
-  | { ok: true; payload: TmnPayload }
+  | { ok: true; payload: TmnPayload; matchedLabel?: string }
   | {
       ok: false;
       reason: "MISSING_AUTH" | "BAD_AUTH" | "BAD_BODY" | "BAD_JWT" | "BAD_PAYLOAD";
       detail?: string;
     };
 
+/**
+ * Verifies an incoming TMN webhook request against one or more key pairs.
+ *
+ * Why multiple keys: TMN issues a separate Authorization+JWT secret per
+ * webhook registration (e.g. inbound แจ้งรับเงิน/เติมเงิน vs outbound
+ * แจ้งหักค่าธรรมเนียม/ถอน). Both webhooks can be configured to POST to the
+ * same endpoint, so the receiver must accept either key.
+ */
 export function verifyTmnRequest(opts: {
   authorizationHeader: string | null;
   rawBody: string;
-  expectedAuthKey: string;
-  jwtSecret: string;
+  keys: TmnKeyPair[];
 }): VerifyResult {
   if (!opts.authorizationHeader) return { ok: false, reason: "MISSING_AUTH" };
+  if (opts.keys.length === 0) return { ok: false, reason: "BAD_AUTH", detail: "no keys configured" };
 
   const provided = opts.authorizationHeader.replace(/^Bearer\s+/i, "").trim();
-  if (provided !== opts.expectedAuthKey) return { ok: false, reason: "BAD_AUTH" };
+  const matched = opts.keys.find((k) => k.authKey === provided);
+  if (!matched) return { ok: false, reason: "BAD_AUTH" };
 
   let body: unknown;
   try {
@@ -117,7 +132,7 @@ export function verifyTmnRequest(opts: {
 
   let decoded: unknown;
   try {
-    decoded = jwt.verify(token, opts.jwtSecret, { algorithms: ["HS256"] });
+    decoded = jwt.verify(token, matched.jwtSecret, { algorithms: ["HS256"] });
   } catch (e) {
     return { ok: false, reason: "BAD_JWT", detail: (e as Error).message };
   }
@@ -127,7 +142,32 @@ export function verifyTmnRequest(opts: {
   if (!p.event_type || typeof p.amount !== "number") {
     return { ok: false, reason: "BAD_PAYLOAD", detail: "missing event_type or amount" };
   }
-  return { ok: true, payload: p as TmnPayload };
+  return { ok: true, payload: p as TmnPayload, matchedLabel: matched.label };
+}
+
+/**
+ * Collects all configured TMN webhook keys from env, in priority order:
+ *   inbound → outbound → legacy single key.
+ * Legacy single key stays supported so existing deploys keep working
+ * during the rollout.
+ */
+export function collectTmnKeysFromEnv(env: NodeJS.ProcessEnv = process.env): TmnKeyPair[] {
+  const pairs: TmnKeyPair[] = [];
+
+  const inAuth = env.TMN_WEBHOOK_AUTH_KEY_INBOUND;
+  const inSecret = env.TMN_WEBHOOK_JWT_SECRET_INBOUND ?? inAuth;
+  if (inAuth && inSecret) pairs.push({ authKey: inAuth, jwtSecret: inSecret, label: "inbound" });
+
+  const outAuth = env.TMN_WEBHOOK_AUTH_KEY_OUTBOUND;
+  const outSecret = env.TMN_WEBHOOK_JWT_SECRET_OUTBOUND ?? outAuth;
+  if (outAuth && outSecret) pairs.push({ authKey: outAuth, jwtSecret: outSecret, label: "outbound" });
+
+  // Legacy single-key config (kept for backward compat).
+  const legacyAuth = env.TMN_WEBHOOK_AUTH_KEY;
+  const legacySecret = env.TMN_WEBHOOK_JWT_SECRET ?? legacyAuth;
+  if (legacyAuth && legacySecret) pairs.push({ authKey: legacyAuth, jwtSecret: legacySecret, label: "legacy" });
+
+  return pairs;
 }
 
 export type LedgerKind = "tmn_incoming" | "tmn_topup" | "tmn_voucher" | "withdraw" | "adjust";
