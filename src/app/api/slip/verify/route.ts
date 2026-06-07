@@ -134,6 +134,8 @@ export async function POST(req: NextRequest) {
       targetBank: ocr?.targetBank,
       sourceName,
       targetName,
+      sourceAccount: ocr?.sourceAccount ?? null,
+      targetAccount: ocr?.targetAccount ?? null,
       datetime,
       qr: parsedQr,
     },
