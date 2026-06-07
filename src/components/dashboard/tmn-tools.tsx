@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Wallet,
   Webhook,
@@ -10,6 +10,8 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Upload,
+  Sparkles,
 } from "lucide-react";
 
 type Configured = {
@@ -161,6 +163,67 @@ function ValidateTool({ ready }: { ready: boolean }) {
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<any>(null);
 
+  // OCR-prefill state
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [ocrSummary, setOcrSummary] = useState<string | null>(null);
+
+  /** Format an ISO datetime as "yyyy-MM-dd HH:mm" in Asia/Bangkok. */
+  function formatDateInput(iso: string | null): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    // shift to +07
+    const ms = d.getTime() + 7 * 3600 * 1000;
+    const x = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${x.getUTCFullYear()}-${pad(x.getUTCMonth() + 1)}-${pad(x.getUTCDate())} ${pad(x.getUTCHours())}:${pad(x.getUTCMinutes())}`;
+  }
+
+  /** Pull last 10 digits from any masked account string. */
+  function lastDigits(s: string | null | undefined): string {
+    if (!s) return "";
+    const d = s.replace(/\D+/g, "");
+    return d.slice(-10);
+  }
+
+  async function handleFile(file: File) {
+    setOcrError(null);
+    setOcrSummary(null);
+    setPreview(URL.createObjectURL(file));
+    setOcrLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/slip/verify", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!j.ok) {
+        setOcrError(j.error ?? "OCR ไม่สำเร็จ");
+        return;
+      }
+      const d = j.data ?? {};
+      const next = {
+        sender_mobile: lastDigits(d.sourceAccount) || form.sender_mobile,
+        receiver_mobile: lastDigits(d.targetAccount) || form.receiver_mobile,
+        transaction_id: d.transRef ?? form.transaction_id,
+        amount_baht:
+          typeof d.amountSatang === "number"
+            ? (d.amountSatang / 100).toFixed(2)
+            : form.amount_baht,
+        transaction_date: formatDateInput(d.datetime) || form.transaction_date,
+      };
+      setForm(next);
+      const filled = Object.entries(next).filter(([k, v]) => v && v !== (form as any)[k]).length;
+      setOcrSummary(`ดึงข้อมูลจากสลิปแล้ว — เติม ${filled} ฟิลด์ (วิธี: ${j.method})`);
+    } catch (e) {
+      setOcrError((e as Error).message);
+    } finally {
+      setOcrLoading(false);
+    }
+  }
+
   async function run(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -184,7 +247,62 @@ function ValidateTool({ ready }: { ready: boolean }) {
   if (!ready) return <NeedToken envName="TMN_P2P_VALIDATE_TOKEN" />;
 
   return (
-    <form onSubmit={run} className="space-y-3">
+    <form onSubmit={run} className="space-y-4">
+      {/* OCR auto-fill dropzone */}
+      <div className="rounded-md border border-dashed border-zinc-300 p-4 bg-zinc-50">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex flex-col items-center justify-center gap-1 w-28 h-28 rounded-md border border-zinc-200 bg-white hover:border-brand-400 hover:bg-brand-50 transition-colors"
+          >
+            {preview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt="slip preview" className="max-h-full max-w-full object-contain rounded" />
+            ) : (
+              <>
+                <Upload className="h-6 w-6 text-zinc-400" />
+                <span className="text-xs text-zinc-500">อัปโหลดสลิป</span>
+              </>
+            )}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleFile(f);
+            }}
+          />
+          <div className="flex-1 min-w-0 text-sm">
+            <div className="flex items-center gap-2 text-zinc-700 font-medium">
+              <Sparkles className="h-4 w-4 text-brand-600" />
+              อ่านสลิปอัตโนมัติ — เติมช่องด้านล่างให้
+            </div>
+            <p className="text-xs text-zinc-500 mt-1">
+              วางรูปสลิป TMN → ระบบจะดึง <code className="bg-white px-1 rounded">trans_id</code>, จำนวน, เบอร์ผู้รับ, วันเวลาให้
+            </p>
+            {ocrLoading && (
+              <div className="mt-2 inline-flex items-center gap-1 text-xs text-zinc-600">
+                <Loader2 className="h-3 w-3 animate-spin" /> กำลังอ่านสลิป…
+              </div>
+            )}
+            {ocrError && (
+              <div className="mt-2 inline-flex items-center gap-1 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+                <AlertCircle className="h-3 w-3" /> {ocrError}
+              </div>
+            )}
+            {ocrSummary && !ocrLoading && !ocrError && (
+              <div className="mt-2 inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                <CheckCircle2 className="h-3 w-3" /> {ocrSummary}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       <p className="text-sm text-zinc-600">
         ใส่ข้อมูลจากสลิป TMN เพื่อตรวจสอบ — ตรวจ <code className="text-xs bg-zinc-100 px-1 rounded">receiver_mobile</code> แค่ 4 ตัวท้าย (ส่ง 0000xxxx ก็ได้)
       </p>
