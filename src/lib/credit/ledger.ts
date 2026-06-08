@@ -50,12 +50,19 @@ export async function postLedger(input: CreditInput): Promise<{ txId: string; ba
     // only success-state transactions move the balance
     if (status === "success") {
       const result = await tx
-        .update(schema.wallets)
-        .set({
-          balanceSatang: sql`${schema.wallets.balanceSatang} + ${input.amountSatang}`,
-          updatedAt: new Date(),
+        .insert(schema.wallets)
+        .values({
+          id: newId("wal"),
+          userId: input.userId,
+          balanceSatang: input.amountSatang,
         })
-        .where(eq(schema.wallets.userId, input.userId))
+        .onConflictDoUpdate({
+          target: schema.wallets.userId,
+          set: {
+            balanceSatang: sql`${schema.wallets.balanceSatang} + ${input.amountSatang}`,
+            updatedAt: new Date(),
+          },
+        })
         .returning({ balance: schema.wallets.balanceSatang });
       return { txId: inserted0.id, balance: result[0]?.balance ?? 0, duplicated: false };
     }
