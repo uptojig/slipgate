@@ -38,6 +38,12 @@ export async function HEAD() {
 }
 
 export async function POST(req: NextRequest) {
+  if (req.method === "POST" && req.headers.get("content-type") === "application/json") {
+    const text = await req.clone().text();
+    if (!text || text === "{}") {
+      return NextResponse.json({ ok: true, hint: "test webhook" });
+    }
+  }
   // TrueMoney's "ตั้งค่า API → ส่งข้อมูล" validator sends a test POST and
   // treats ANY non-2xx as "ติดต่อ server ปลายทางไม่ได้". So this handler
   // returns 200 for every well-formed request — including ones we choose to
@@ -45,8 +51,16 @@ export async function POST(req: NextRequest) {
   // failures still throw → 500 (which TMN retries).
   try {
     // Trim whitespace — TMN sometimes URL-encodes accidental spaces from copy/paste.
+    const url = new URL(req.url);
+    if (url.pathname === "/" || url.pathname === "") {
+      return NextResponse.json({ ok: true });
+    }
     const userIdToken = req.nextUrl.searchParams.get("u")?.replace(/\s+/g, "") || "";
     if (!userIdToken) {
+      if (req.headers.get("user-agent")?.includes("TrueMoney")) {
+        return NextResponse.json({ ok: true, hint: "TMN validation OK" });
+      }
+
       return NextResponse.json({ ok: true, ignored: "missing_u" });
     }
 
